@@ -1,0 +1,14 @@
+name: Deploy to Apify
+
+on:
+  push:
+    branches: [master, main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Apify build
+        run: |
+          curl -s -X POST \
+            "https://api.apify.com/v2/acts/${{ secrets.APIFY_ACTOR_ID }}/builds?token=${{ secrets.APIFY_TOKEN }}&version=0.1"

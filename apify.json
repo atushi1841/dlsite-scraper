@@ -1,0 +1,11 @@
+{
+  "name": "dlsite-scraper",
+  "version": "0.1.0",
+  "description": "Scrape DLsite (DLsite.com) — Japan's largest doujin marketplace. Extract product data, search results, rankings, and category listings for voice, ASMR, games, manga, and music. Features: keyword search, ranking scraping (daily/weekly/monthly/total), product detail by ID, category browsing, and filters by work type. Unique data: circle/brand names, voice actors, download counts, ratings, file info, release dates, and prices.",
+  "author": "Atushi",
+  "license": "MIT",
+  "dockerfile": "./Dockerfile",
+  "input": "./INPUT_SCHEMA.json",
+  "readme": "./README.md",
+  "output": "dataset"
+}

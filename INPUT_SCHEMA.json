@@ -1,0 +1,82 @@
+{
+  "title": "DLsite Scraper — 同人マーケットデータ抽出",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "searchKeyword": {
+      "title": "Search Keyword",
+      "type": "string",
+      "description": "Keyword to search for. Used when searchMode='search'.",
+      "editor": "textfield",
+      "prefill": "ASMR"
+    },
+    "searchMode": {
+      "title": "Search Mode",
+      "type": "string",
+      "description": "How to find products",
+      "editor": "select",
+      "default": "search",
+      "enum": ["search", "ranking", "product_ids"],
+      "enumTitles": [
+        "Keyword Search — search by title/keyword",
+        "Rankings — scrape top-ranked products",
+        "Product IDs — scrape specific RJ/VJ/BJ IDs"
+      ]
+    },
+    "rankingType": {
+      "title": "Ranking Type",
+      "type": "string",
+      "description": "Which ranking to scrape (only used when searchMode='ranking')",
+      "editor": "select",
+      "default": "daily",
+      "enum": ["daily", "weekly", "monthly", "total"],
+      "enumTitles": ["Daily", "Weekly", "Monthly", "All-time Total"]
+    },
+    "workType": {
+      "title": "Work Type",
+      "type": "string",
+      "description": "Filter by work category. 'all' = all types",
+      "editor": "select",
+      "default": "all",
+      "enum": ["all", "voice", "game", "manga", "music", "soft"],
+      "enumTitles": [
+        "All types",
+        "Voice / ASMR",
+        "Games",
+        "Manga / Doujinshi",
+        "Music",
+        "Software"
+      ]
+    },
+    "productIds": {
+      "title": "Product IDs (comma-separated)",
+      "type": "string",
+      "description": "Specific RJ/VJ/BJ product IDs to scrape. Used when searchMode='product_ids'. Example: RJ01000001,RJ01000002",
+      "editor": "textfield"
+    },
+    "maxResults": {
+      "title": "Max Results",
+      "type": "integer",
+      "description": "Maximum number of products to return (1-200)",
+      "default": 50,
+      "maximum": 200,
+      "minimum": 1,
+      "editor": "number"
+    },
+    "proxyConfiguration": {
+      "title": "Proxy Configuration",
+      "type": "object",
+      "description": "Apify proxy (recommended: use Apify proxy with country JP for reliable access)",
+      "editor": "proxy",
+      "default": {
+        "useApifyProxy": true,
+        "apifyProxyCountry": "JP"
+      },
+      "prefill": {
+        "useApifyProxy": true,
+        "apifyProxyCountry": "JP"
+      }
+    }
+  },
+  "required": ["searchMode"]
+}
