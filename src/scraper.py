@@ -328,17 +328,20 @@ def scrape_ranking(
         url = f"{BASE_URL}/{base}/ranking/{period}"
     else:
         url = f"{BASE_URL}/{base}/ranking?date=all"
-    
     session = create_session()
     resp = session.get(url)
+    print(f"  [DEBUG] ranking URL: {url}")
+    print(f"  [DEBUG] status: {resp.status_code}, len: {len(resp.content)}")
     if resp.status_code != 200:
         print(f"  [ERR] Ranking page returned {resp.status_code}")
+        print(f"  [ERR] Response: {resp.text[:200]}")
         return []
     
     html = resp.text
     # Check for Cloudflare
     if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
         print("  [ERR] Cloudflare block on ranking page")
+        print(f"  [ERR] HTML: {html[:300]}")
         return []
     
     html = resp.text
