@@ -332,6 +332,7 @@ def scrape_ranking(
     resp = session.get(url)
     print(f"  [DEBUG] ranking URL: {url}")
     print(f"  [DEBUG] status: {resp.status_code}, len: {len(resp.content)}")
+    print(f"  [DEBUG] HTML start: {resp.text[:300]}")
     if resp.status_code != 200:
         print(f"  [ERR] Ranking page returned {resp.status_code}")
         print(f"  [ERR] Response: {resp.text[:200]}")
