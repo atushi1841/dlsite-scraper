@@ -25,19 +25,17 @@ def main() -> None:
         parser.add_argument("--ranking", default="weekly")
         parser.add_argument("--ids", default="")
         parser.add_argument("--max", type=int, default=10)
-        parser.add_argument("--detail", default="basic", choices=["basic", "full"])
         parser.add_argument("--output", default="dlsite_results.json")
         args = parser.parse_args()
 
+        items = []
         if args.mode == "search":
-            items = scrape_search(args.keyword, args.max, args.detail)
+            items = scrape_search(args.keyword, args.max)
         elif args.mode == "ranking":
-            items = scrape_ranking(args.ranking, args.max, args.detail)
+            items = scrape_ranking(args.ranking, args.max)
         elif args.mode == "product_ids":
             ids = [i.strip() for i in args.ids.split(",") if i.strip()]
-            items = scrape_product_ids(ids, args.detail)
-        else:
-            items = []
+            items = scrape_product_ids(ids)
 
         output = [i.to_dict() for i in items]
         Path(args.output).write_text(json.dumps(output, ensure_ascii=False, indent=2))
@@ -51,18 +49,17 @@ def main() -> None:
             keyword = inp.get("searchKeyword", "ASMR")
             ranking_type = inp.get("rankingType", "weekly")
             product_ids_str = inp.get("productIds", "")
-            detail_level = inp.get("detailLevel", "basic")
             max_results = max(1, int(inp.get("maxResults", 50)))
 
-            Actor.log.info(f"Mode={mode} detail={detail_level} max={max_results}")
+            Actor.log.info(f"Mode={mode} max={max_results}")
 
             if mode == "search":
-                items = scrape_search(keyword, max_results, detail_level)
+                items = scrape_search(keyword, max_results)
             elif mode == "ranking":
-                items = scrape_ranking(ranking_type, max_results, detail_level)
+                items = scrape_ranking(ranking_type, max_results)
             elif mode == "product_ids":
                 ids = [i.strip() for i in product_ids_str.split(",") if i.strip()]
-                items = scrape_product_ids(ids, detail_level)
+                items = scrape_product_ids(ids)
             else:
                 items = []
 

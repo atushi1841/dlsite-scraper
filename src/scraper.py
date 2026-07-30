@@ -1,14 +1,8 @@
 """
-DLsite Scraper — Core scraping logic.
+DLsite Scraper — Core scraping logic v2 (API-based).
 
-Three modes + two detail levels:
-- keyword search (Playwright for JS rendering)
-- ranking scrape (direct HTTP — server-rendered)
-- product ID scrape (direct HTTP — detail pages)
-
-Detail levels:
-- basic: Direct HTTP (fast, 15+ fields)
-- full: Playwright-enriched (includes ratings, DL count, reviews)
+Uses DLsite's internal JSON API for product details (86 fields, no JS needed).
+Only Playwright for search results (Vue.js page).
 """
 from __future__ import annotations
 
@@ -23,57 +17,55 @@ from urllib.parse import quote
 import httpx
 
 BASE_URL = "https://www.dlsite.com"
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
-    "Gecko/20100101 Firefox/133.0"
-)
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
 HEADERS = {
     "User-Agent": UA,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "application/json,text/html,*/*",
     "Accept-Language": "ja-JP,ja;q=0.9,en-US,en;q=0.5",
     "DNT": "1",
+    "Referer": "https://www.dlsite.com/",
 }
-CRAWL_DELAY = 1.5  # seconds between requests
-MAX_WORKERS = 5   # parallel HTTP detail scraping
-MAX_RETRIES = 2   # HTTP retries
+CRAWL_DELAY = 1.0
+MAX_WORKERS = 8
+MAX_RETRIES = 2
 
-RJ_PREFIX_MAP = {
-    "RJ": "home", "VJ": "maniax", "BJ": "maniax",
-    "RE": "home", "VE": "maniax", "SJ": "maniax",
+# API endpoint mapping by work ID prefix
+API_PATH_MAP = {
+    "RJ": "pro", "RE": "pro",
+    "VJ": "maniax", "BJ": "maniax", "VE": "maniax", "SJ": "maniax",
+}
+
+# Work type code mapping
+WORK_TYPE_MAP = {
+    "SOU": "Voice/ASMR", "G": "Game", "C": "Manga/Comic",
+    "M": "Music", "S": "Software", "VOI": "Voice", "VID": "Video",
 }
 
 
 def _clean(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _retry_get(session: httpx.Client, url: str, **kwargs) -> httpx.Response | None:
-    """GET with retry and backoff."""
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = session.get(url, **kwargs)
-            if resp.status_code == 200:
-                return resp
-            time.sleep(2 * attempt)
-        except Exception:
-            time.sleep(2 * attempt)
-    return None
+    return re.sub(r"\s+", " ", text).strip() if text else ""
 
 
 @dataclass
 class DLsiteItem:
-    """Normalized DLsite product data."""
+    """Normalized DLsite product data (using API fields)."""
     work_id: str = ""
-    title: str = ""
-    circle: str = ""
-    price_jpy: int | None = None
-    original_price_jpy: int | None = None
-    sale_badge: str = ""
-    release_date: str = ""
+    title: str = ""              # work_name
+    circle: str = ""             # maker_id → circle name
+    circle_id: str = ""
+    price_jpy: int | None = None   # price
+    original_price_jpy: int | None = None  # official_price
+    price_usd: float | None = None
+    price_eur: float | None = None
+    price_gbp: float | None = None
+    discount_rate: int | None = None   # discount_rate (%)
+    sale_active: bool = False          # is_sale
+    release_date: str = ""            # regist_date
     voice_actor: str = ""
     age_rating: str = ""
-    work_type: str = ""
-    file_format: str = ""
+    work_type: str = ""               # work_type → mapped
+    work_type_code: str = ""
+    file_format: str = ""             # options
     file_size: str = ""
     genres: list[str] = None
     dl_count: int | None = None
@@ -85,7 +77,8 @@ class DLsiteItem:
     image_url: str = ""
     sample_images: list[str] = None
     url: str = ""
-    detail_level: str = "basic"
+    site_id: str = ""
+    detail_level: str = "api"
     scraped_at: str = ""
 
     def to_dict(self) -> dict:
@@ -93,188 +86,185 @@ class DLsiteItem:
         if self.genres is None: d["genres"] = []
         if self.sample_images is None: d["sample_images"] = []
         d["scraped_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        return d
+        return {k: v for k, v in d.items() if v is not None}
 
 
 # ── HTTP Session ──
 
 def create_session() -> httpx.Client:
-    """HTTPX client with adult cookies. Bypasses Apify proxy env vars."""
-    client = httpx.Client(
-        headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False,
-    )
-    try:
-        client.get(f"{BASE_URL}/home", timeout=10)
-    except Exception:
-        pass
+    client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False)
     client.cookies.set("adult", "on", domain=".dlsite.com")
     client.cookies.set("ovad", "on", domain=".dlsite.com")
     return client
 
 
-# ── Product Detail (Basic — Direct HTTP) ──
+def _retry_get(session: httpx.Client, url: str) -> httpx.Response | None:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.get(url)
+            if resp.status_code == 200:
+                return resp
+            time.sleep(2 * attempt)
+        except Exception:
+            time.sleep(2 * attempt)
+    return None
 
-def _parse_detail_from_html(html: str, work_id: str, url: str) -> DLsiteItem:
-    """Extract product fields from server-rendered HTML (no JS needed)."""
-    item = DLsiteItem(work_id=work_id, url=url, detail_level="basic")
 
-    m = re.search(r"<title>(.*?)</title>", html, re.DOTALL)
-    if m: item.title = m.group(1).split(" | ")[0].strip()
+# ── Product Detail via API (primary) ──
 
-    m = re.search(r"(?:サークル名|ブランド|メーカー)[：:]?\s*</th>\s*<td[^>]*>(.*?)</td>", html, re.DOTALL)
-    if m:
-        raw = re.sub(r"<[^>]+>", " ", m.group(1))
-        # Clean up follow button text and extra tags
-        item.circle = _clean(re.sub(r"(?:フォロー|お気に入り|閉じる).*$", "", raw))
+def _prefix(wid: str) -> str:
+    m = re.match(r"([A-Z]+)", wid)
+    return m.group(1) if m else "RJ"
 
-    pm = re.search(r'<meta[^>]*itemprop="price"[^>]*content="(\d+)"', html)
-    if pm: item.price_jpy = int(pm.group(1))
-    om = re.search(r'data-official_price="(\d+)"', html)
-    if om: item.original_price_jpy = int(om.group(1))
-    if item.price_jpy is None:
-        pj = re.search(r'"(?:price|official_price)[\'"]:\s*(\d+)', html)
-        if pj: item.price_jpy = int(pj.group(1))
 
+def scrape_detail_api(session: httpx.Client, work_id: str) -> DLsiteItem | None:
+    """Scrape product detail via DLsite's internal JSON API (86 fields, no JS needed)."""
+    prefix_str = _prefix(work_id)
+    api_path = API_PATH_MAP.get(prefix_str, "pro")
+    url = f"{BASE_URL}/{api_path}/product/info/ajax?product_id={work_id}"
+
+    resp = _retry_get(session, url)
+    if not resp:
+        return None
+
+    try:
+        data = json.loads(resp.text)
+    except Exception:
+        return None
+
+    if isinstance(data, list) and len(data) == 0:
+        return None
+
+    key = list(data.keys())[0] if isinstance(data, dict) else work_id
+    p = data.get(key, {}) if isinstance(data, dict) else {}
+
+    item = DLsiteItem(work_id=work_id)
+    item.url = f"{BASE_URL}/home/work/=/product_id/{work_id}.html"
+
+    # Basic info
+    item.title = p.get("work_name", "")
+    item.circle_id = p.get("maker_id", "")
+    item.site_id = p.get("site_id", "")
+
+    # Pricing
+    item.price_jpy = p.get("price")
+    item.original_price_jpy = p.get("official_price")
+    item.discount_rate = p.get("discount_rate")
+    item.sale_active = bool(p.get("is_sale"))
+
+    # Multi-currency
+    cp = p.get("currency_official_price", {})
+    if isinstance(cp, dict):
+        item.price_usd = cp.get("USD")
+        item.price_eur = cp.get("EUR")
+        item.price_gbp = cp.get("GBP")
+
+    # Dates
+    item.release_date = p.get("regist_date", "")
+
+    # Work type
+    wt = p.get("work_type", "")
+    item.work_type_code = wt
+    item.work_type = WORK_TYPE_MAP.get(wt, wt)
+
+    # File info
+    opts = p.get("options", "")
+    if opts:
+        opt_list = opts.split("#")
+        item.file_format = ", ".join(opt_list)
+
+    # Age rating
+    age_map = {1: "All ages", 2: "R15", 3: "R18"}
+    item.age_rating = age_map.get(p.get("age_category"), str(p.get("age_category", "")))
+
+    # Downloads & ratings
+    item.dl_count = p.get("dl_count")
+    item.rating = p.get("rate_average_2dp")
+    item.rating_count = p.get("rate_count")
+    item.wishlist_count = p.get("wishlist_count")
+    item.review_count = p.get("review_count")
+
+    # Image
+    img = p.get("work_image", "")
+    if img:
+        item.image_url = f"https:{img}" if img.startswith("//") else img
+
+    # Empty fields that need HTML scraping
+    # (voice_actor, file_size, genres, description are only in HTML)
+
+    return item
+
+
+# ── Product Detail via HTML (supplement for API-only fields) ──
+
+def _scrape_detail_html_supplement(session: httpx.Client, item: DLsiteItem) -> DLsiteItem:
+    """Supplement API data with HTML-only fields (voice_actor, genres, description, file_size)."""
+    if not item.work_id:
+        return item
+
+    prefix_str = _prefix(item.work_id)
+    base_path = "home" if prefix_str in ("RJ", "RE") else "maniax"
+    url = f"{BASE_URL}/{base_path}/work/=/product_id/{item.work_id}.html"
+
+    resp = _retry_get(session, url)
+    if not resp:
+        return item
+
+    html = resp.text
+
+    # Voice actor, genres, file_size from detail table
     for th, td in re.findall(r"<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>", html, re.DOTALL):
         key = _clean(re.sub(r"<[^>]+>", " ", th))
         val = _clean(re.sub(r"<[^>]+>", " ", td))
-        if "販売日" in key: item.release_date = val
-        elif "声優" in key: item.voice_actor = val
-        elif "年齢指定" in key: item.age_rating = val
-        elif "作品形式" in key: item.work_type = val
-        elif "ファイル形式" in key: item.file_format = val
-        elif "ファイル容量" in key: item.file_size = val
-        elif "ジャンル" in key:
+        if "声優" in key and not item.voice_actor:
+            item.voice_actor = val
+        elif "ファイル容量" in key and not item.file_size:
+            item.file_size = val
+        elif "ジャンル" in key and not item.genres:
             item.genres = [g.strip() for g in re.split(r"[\n/]", val) if g.strip()]
 
+    # Circle name from HTML (API only gives maker_id)
+    if not item.circle:
+        cm = re.search(r"(?:サークル名|ブランド|メーカー)[：:]?\s*</th>\s*<td[^>]*>(.*?)</td>", html, re.DOTALL)
+        if cm:
+            raw = re.sub(r"<[^>]+>", " ", cm.group(1))
+            item.circle = _clean(re.sub(r"(?:フォロー|お気に入り|閉じる).*$", "", raw))
+
+    # Description
     dm = re.search(r'class="work_description[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL)
     if dm:
         desc = re.sub(r"<[^>]+>", "\n", dm.group(1))
         item.description = _clean(desc.replace("&nbsp;", " "))[:3000]
 
-    im = re.search(r'<meta[^>]*property="og:image"[^>]*content="([^"]*)"', html)
-    if im: item.image_url = im.group(1)
-    if not item.image_url:
-        im = re.search(r'class="work_slider"[^>]*>.*?src="([^"]*)"', html, re.DOTALL)
-        if im: item.image_url = im.group(1)
-
+    # Sample images
     samples = re.findall(r'<img[^>]*src="(https://[^"]*(?:sample|img)[^"]*)"', html)
-    if samples: item.sample_images = samples[:10]
+    if samples:
+        item.sample_images = samples[:10]
 
     return item
 
 
-def scrape_detail_basic(session: httpx.Client, work_id: str) -> DLsiteItem | None:
-    """Fast product detail scraping via direct HTTP (no JS)."""
-    prefix = re.match(r"([A-Z]+)", work_id)
-    base_path = RJ_PREFIX_MAP.get(prefix.group(1) if prefix else "RJ", "home")
-    url = f"{BASE_URL}/{base_path}/work/=/product_id/{work_id}.html"
-    resp = _retry_get(session, url)
-    if not resp or "adultcheck" in resp.url.path:
-        return None
-    html = resp.text
-    if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
-        return None
-    return _parse_detail_from_html(html, work_id, url)
+# ── Complete product scrape ──
 
-
-def _scrape_one_basic(wid: str) -> DLsiteItem | None:
-    """Thread-safe wrapper for basic scraping."""
+def scrape_one(wid: str) -> DLsiteItem | None:
+    """Scrape one product: API (fast) + HTML supplement (for extra fields)."""
     session = create_session()
-    return scrape_detail_basic(session, wid)
-
-
-# ── Product Detail (Full — Playwright rendered) ──
-
-async def _scrape_detail_full_pw(
-    browser: Any, work_id: str,
-) -> DLsiteItem | None:
-    """Scrape product detail with Playwright to get Vue-rendered fields (rating, DL count)."""
-    prefix = re.match(r"([A-Z]+)", work_id)
-    base_path = RJ_PREFIX_MAP.get(prefix.group(1) if prefix else "RJ", "home")
-    url = f"{BASE_URL}/{base_path}/work/=/product_id/{work_id}.html"
-
-    try:
-        page = await browser.new_page()
-        await page.goto(url, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-
-        html = await page.content()
-
-        rating_text = ""
-        dl_text = ""
-        try:
-            el = await page.query_selector(".point.average_count")
-            if el: rating_text = await el.inner_text()
-        except: pass
-        try:
-            el = await page.query_selector(".work_dl_details .point")
-            if el: dl_text = await el.inner_text()
-        except: pass
-
-        await page.close()
-
-        item = _parse_detail_from_html(html, work_id, url)
-        if rating_text:
-            try: item.rating = float(rating_text.strip())
-            except: pass
-        if dl_text:
-            try: item.dl_count = int(dl_text.strip().replace(",", ""))
-            except: pass
-        item.detail_level = "full"
-        return item
-    except Exception:
+    item = scrape_detail_api(session, wid)
+    if not item:
         return None
+    # Supplement with HTML-only fields
+    item = _scrape_detail_html_supplement(session, item)
+    return item
 
 
-async def _enrich_with_playwright(
-    work_ids: list[str], max_results: int,
-) -> list[DLsiteItem]:
-    """Scrape products with Playwright for full Vue-rendered data."""
-    from playwright.async_api import async_playwright
-
-    ids = work_ids[:max_results]
-    results: list[DLsiteItem] = []
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-default-browser-check",
-                "--disable-component-update",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent=UA, locale="ja-JP", timezone_id="Asia/Tokyo",
-            viewport={"width": 1920, "height": 1080},
-        )
-        await context.add_cookies([
-            {"name": "adult", "value": "on", "domain": ".dlsite.com", "path": "/"},
-            {"name": "ovad", "value": "on", "domain": ".dlsite.com", "path": "/"},
-        ])
-
-        for wid in ids:
-            item = await _scrape_detail_full_pw(browser, wid)
-            if item:
-                results.append(item)
-            await asyncio.sleep(CRAWL_DELAY)
-
-        await browser.close()
-
-    return results
-
-
-# ── Batch HTTP (parallel) ──
-
-def _scrape_many_basic(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
-    """Batch scrape products in parallel via direct HTTP (fast)."""
+def scrape_many(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
+    """Batch scrape products in parallel."""
     if not work_ids:
         return []
     ids = work_ids[:max_results]
     results: list[DLsiteItem] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        fut_map = {pool.submit(_scrape_one_basic, wid): wid for wid in ids}
+        fut_map = {pool.submit(scrape_one, wid): wid for wid in ids}
         for future in concurrent.futures.as_completed(fut_map):
             item = future.result()
             if item:
@@ -284,38 +274,48 @@ def _scrape_many_basic(work_ids: list[str], max_results: int) -> list[DLsiteItem
     return [by_id[wid] for wid in ids if wid in by_id]
 
 
-def _scrape_many_full(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
-    """Batch scrape products with Playwright for Vue-rendered data (slower).
-    Uses ThreadPoolExecutor to avoid async context conflicts (Apify mode)."""
-    if not work_ids:
-        return []
-    ids = work_ids[:max_results]
-    try:
-        loop = asyncio.get_running_loop()
-        # Inside async context — run in separate thread
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            fut = pool.submit(lambda: asyncio.run(_enrich_with_playwright(ids, len(ids))))
-            return fut.result()
-    except RuntimeError:
-        return asyncio.run(_enrich_with_playwright(ids, len(ids)))
+# ── Ranking ──
 
-
-# ── Playwright Search ──
-
-async def _scrape_search_pw(
-    url: str, max_results: int,
+def scrape_ranking(
+    ranking_type: str = "daily",
+    max_results: int = 50,
 ) -> list[DLsiteItem]:
-    """Search via Playwright, extract product IDs, scrape with Playwright enrichment."""
+    """Scrape rankings via HTML (get work IDs) + API (product details)."""
+    period_map = {"daily": "day", "weekly": "week", "monthly": "month", "total": ""}
+    period = period_map.get(ranking_type, "day")
+    url = f"{BASE_URL}/home/ranking/{period}" if period else f"{BASE_URL}/home/ranking?date=all"
+
+    session = create_session()
+    resp = _retry_get(session, url)
+    if not resp:
+        return []
+    html = resp.text
+    if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
+        return []
+
+    work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE|SJ)\d{8}", html)
+    work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
+    return scrape_many(work_ids, max_results) if work_ids else []
+
+
+# ── Product IDs ──
+
+def scrape_product_ids(product_ids: list[str]) -> list[DLsiteItem]:
+    """Scrape specific product IDs via API (fastest)."""
+    return scrape_many([pid.strip() for pid in product_ids if pid.strip()], len(product_ids))
+
+
+# ── Search (Playwright) ──
+
+async def _run_search_pw(url: str, max_results: int) -> list[DLsiteItem]:
+    """Search via Playwright (for Vue.js rendering), then API for details."""
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-default-browser-check",
-                "--disable-component-update",
-            ],
+            args=["--disable-blink-features=AutomationControlled",
+                  "--no-default-browser-check", "--disable-component-update"],
         )
         context = await browser.new_context(
             user_agent=UA, locale="ja-JP", timezone_id="Asia/Tokyo",
@@ -344,83 +344,23 @@ async def _scrape_search_pw(
             pass
 
         html = await page.content()
-        links = re.findall(r'/work/=/product_id/((?:RJ|VJ|BJ|RE|VE)\d+)', html)
-        links = list(dict.fromkeys(links))
-
-        # Scrape each product with Playwright (same browser) for full data
-        results: list[DLsiteItem] = []
-        for wid in links[:max_results]:
-            item = await _scrape_detail_full_pw(browser, wid)
-            if item:
-                results.append(item)
-            await asyncio.sleep(CRAWL_DELAY)
-
         await browser.close()
-    return results
+
+    links = re.findall(r'/work/=/product_id/((?:RJ|VJ|BJ|RE|VE|SJ)\d+)', html)
+    links = list(dict.fromkeys(links))
+    return scrape_many(links, max_results)
 
 
-# ── Public API ──
-
-def scrape_search(
-    keyword: str,
-    max_results: int = 50,
-    detail_level: str = "basic",
-) -> list[DLsiteItem]:
-    """Search DLsite. When detail='full', uses Playwright for all data."""
+def scrape_search(keyword: str, max_results: int = 50) -> list[DLsiteItem]:
+    """Search DLsite. Playwright for Vue.js + API for details."""
     url = f"{BASE_URL}/home/fs?keyword={quote(keyword)}"
 
-    def _run_search():
-        if detail_level == "full":
-            return asyncio.run(_scrape_search_pw(url, max_results))
-        ids = asyncio.run(_scrape_search_pw(url, max_results))
-        if not ids:
-            return []
-        return _scrape_many_basic([i.work_id for i in ids], max_results)
+    def _run():
+        return asyncio.run(_run_search_pw(url, max_results))
 
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: _run_search()).result()
+            return pool.submit(lambda: _run()).result()
     except RuntimeError:
-        return _run_search()
-
-
-def scrape_ranking(
-    ranking_type: str = "daily",
-    max_results: int = 50,
-    detail_level: str = "basic",
-) -> list[DLsiteItem]:
-    """Scrape rankings. Direct HTTP for listing, optional Playwright for full detail."""
-    period_map = {"daily": "day", "weekly": "week", "monthly": "month", "total": ""}
-    period = period_map.get(ranking_type, "day")
-    url = f"{BASE_URL}/home/ranking/{period}" if period else f"{BASE_URL}/home/ranking?date=all"
-
-    session = create_session()
-    resp = _retry_get(session, url)
-    if not resp:
-        return []
-    html = resp.text
-    if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
-        return []
-
-    work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE)\d{8}", html)
-    work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
-    if not work_ids:
-        return []
-
-    if detail_level == "full":
-        return _scrape_many_full(work_ids, max_results)
-    return _scrape_many_basic(work_ids, max_results)
-
-
-def scrape_product_ids(
-    product_ids: list[str],
-    detail_level: str = "basic",
-) -> list[DLsiteItem]:
-    """Scrape specific product IDs."""
-    ids = [pid.strip() for pid in product_ids if pid.strip()]
-    if not ids:
-        return []
-    if detail_level == "full":
-        return _scrape_many_full(ids, len(ids))
-    return _scrape_many_basic(ids, len(ids))
+        return _run()

@@ -63,18 +63,6 @@
       "minimum": 1,
       "editor": "number"
     },
-    "detailLevel": {
-      "title": "Detail Level",
-      "type": "string",
-      "description": "'basic' (fast, 15+ fields) or 'full' (Playwright-enriched, includes ratings and DL count — slower)",
-      "editor": "select",
-      "default": "basic",
-      "enum": ["basic", "full"],
-      "enumTitles": [
-        "Basic (fast) — title, price, circle, genres, file info, images, description",
-        "Full (Playwright) — all basic fields + rating, DL count, wishlist count, review count"
-      ]
-    },
     "proxyConfiguration": {
       "title": "Proxy Configuration",
       "type": "object",
