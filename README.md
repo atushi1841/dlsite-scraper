@@ -12,12 +12,18 @@ Scrape [DLsite](https://www.dlsite.com) — Japan's largest doujin (同人) digi
 - **30+ Data Fields** per product including:
   - Title, circle/brand name, circle ID, work ID (RJ/VJ/BJ)
   - Price (sale + original), discount rate, sale status
-  - **Multi-currency prices**: JPY, USD, EUR, GBP
+  - **Multi-currency prices**: JPY, USD, EUR, GBP, TWD, CNY, KRW
   - Voice actors, genres, age rating
   - Work type, file format, file size
   - Sample images, full description
   - **Download count**, **rating (★4.92)**, rating count
   - **Wishlist count**, **review count**
+  - **Bulk‑buy price**, **bulk‑buy discount**, **is_bulkbuy**
+  - **Limit download count**, **remaining download count**
+  - **is_reservable**, **is_timesale**
+  - **is_original_work**, **original_work_id**, **translation_lang**
+  - **locale_official_price**, **locale_price**
+  - **sex_category**
   - Release date, maker ID, site ID
 - **Adult Content** — Full support for both all-ages and R18 products
 - **No Cloudflare** — Direct access with no blocking

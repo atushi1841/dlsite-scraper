@@ -63,6 +63,13 @@
       "minimum": 1,
       "editor": "number"
     },
+    "locale": {
+      "title": "Locale (language)",
+      "type": "string",
+      "description": "Locale for product data (e.g. ja_JP, en_US). Default: ja_JP",
+      "editor": "textfield",
+      "default": "ja_JP"
+    },
     "proxyConfiguration": {
       "title": "Proxy Configuration",
       "type": "object",

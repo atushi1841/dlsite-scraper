@@ -37,6 +37,18 @@
         "type": "number",
         "description": "Price in GBP"
       },
+      "price_twd": {
+        "type": "number",
+        "description": "Price in TWD"
+      },
+      "price_cny": {
+        "type": "number",
+        "description": "Price in CNY"
+      },
+      "price_krw": {
+        "type": "number",
+        "description": "Price in KRW"
+      },
       "discount_rate": {
         "type": "integer",
         "description": "Discount percentage (e.g., 10 = 10% off)"
@@ -89,6 +101,58 @@
       "review_count": {
         "type": "integer",
         "description": "Number of reviews"
+      },
+      "bulkbuy_price": {
+        "type": "integer",
+        "description": "Bulk‑buy price in JPY"
+      },
+      "bulkbuy_discount_rate": {
+        "type": "integer",
+        "description": "Bulk‑buy discount percentage"
+      },
+      "is_bulkbuy": {
+        "type": "boolean",
+        "description": "Whether bulk‑buy is available"
+      },
+      "limit_dl_count": {
+        "type": "integer",
+        "description": "Sale limit (max number of sales)"
+      },
+      "limit_sold_dl_count": {
+        "type": "integer",
+        "description": "Remaining number of sales left"
+      },
+      "is_reservable": {
+        "type": "boolean",
+        "description": "Whether the product can be pre‑ordered"
+      },
+      "is_timesale": {
+        "type": "boolean",
+        "description": "Whether the product is on time‑sale"
+      },
+      "is_original_work": {
+        "type": "boolean",
+        "description": "Whether the work is original (not a translation)"
+      },
+      "original_work_id": {
+        "type": "string",
+        "description": "If this is a translation, the original product ID"
+      },
+      "translation_lang": {
+        "type": "string",
+        "description": "Translation language code (e.g. en)"
+      },
+      "locale_official_price": {
+        "type": "object",
+        "description": "Locale‑specific official prices"
+      },
+      "locale_price": {
+        "type": "object",
+        "description": "Locale‑specific sale prices"
+      },
+      "sex_category": {
+        "type": "integer",
+        "description": "Gender category (1=male, 2=female, 3=other)"
       },
       "image_url": {
         "type": "string",

@@ -42,6 +42,23 @@ WORK_TYPE_MAP = {
     "M": "Music", "S": "Software", "VOI": "Voice", "VID": "Video",
 }
 
+# Work type filter codes for ranking/modes
+WORK_TYPE_FILTER_MAP: dict[str, set[str]] = {
+    "voice": {"SOU"},
+    "game": {"G", "ACN", "ADV", "RPG", "SLG", "STG", "PZL", "TBL", "TYP", "ETC", "MOV"},
+    "manga": {"C", "MNG", "VCM", "WBT"},
+    "music": {"M"},
+    "soft": {"S"},
+}
+
+
+def filter_by_work_type(items: list[DLsiteItem], work_type_filter: str) -> list[DLsiteItem]:
+    """Filter items by work type code."""
+    codes = WORK_TYPE_FILTER_MAP.get(work_type_filter)
+    if codes is None:
+        return items
+    return [it for it in items if it.work_type_code in codes]
+
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip() if text else ""
@@ -79,6 +96,27 @@ class DLsiteItem:
     file_size_bytes: int | None = None
     file_size_display: str = ""
     contents_count: int | None = None
+    dl_count: int | None = None
+    rating: float | None = None
+    rating_count: int | None = None
+    wishlist_count: int | None = None
+    review_count: int | None = None
+    bulkbuy_price: int | None = None
+    bulkbuy_discount_rate: int | None = None
+    is_bulkbuy: bool = False
+    limit_dl_count: int | None = None
+    limit_sold_dl_count: int | None = None
+    is_reservable: bool = False
+    is_timesale: bool = False
+    is_original_work: bool = True
+    original_work_id: str | None = None
+    translation_lang: str | None = None
+    locale_official_price: dict | None = None
+    locale_price: dict | None = None
+    price_gbp: float | None = None
+    price_twd: float | None = None
+    price_cny: float | None = None
+    price_krw: float | None = None
     genres: list[str] = None
     genre_ids: list[int] = None
     platform: list[str] = None
@@ -186,6 +224,38 @@ def scrape_detail_api(session: httpx.Client, work_id: str) -> DLsiteItem | None:
     item.price_without_tax = p.get("price_without_tax")
     item.official_price_without_tax = p.get("official_price_without_tax")
 
+    # Bulkbuy / limit / reservation
+    item.bulkbuy_price = p.get("bulkbuy_price")
+    item.bulkbuy_discount_rate = p.get("bulkbuy_discount_rate")
+    item.is_bulkbuy = bool(p.get("is_bulkbuy"))
+    item.limit_dl_count = p.get("limit_dl_count")
+    item.limit_sold_dl_count = p.get("limit_sold_dl_count")
+    item.is_reservable = bool(p.get("is_reservable"))
+    item.is_timesale = bool(p.get("is_timesale_work"))
+
+    # Multi‑currency (from currency_price dict)
+    cp = p.get("currency_price", {})
+    if isinstance(cp, dict):
+        item.price_gbp = cp.get("GBP")
+        item.price_twd = cp.get("TWD")
+        item.price_cny = cp.get("CNY")
+        item.price_krw = cp.get("KRW")
+
+    # Translation info
+    ti = p.get("translation_info", {})
+    if isinstance(ti, dict):
+        item.is_original_work = ti.get("is_original", True)
+        item.original_work_id = ti.get("original_workno")
+        item.translation_lang = ti.get("lang")
+
+    # Locale‑specific price dicts
+    item.locale_official_price = p.get("locale_official_price")
+    item.locale_price = p.get("locale_price")
+
+    # Sex category (already set earlier, but ensure)
+    if p.get("sex_category") is not None:
+        item.sex_category = p.get("sex_category")
+
     # Dates
     item.release_date = p.get("regist_date", "")
     item.update_date = p.get("update_date", "")
@@ -292,6 +362,30 @@ def scrape_detail_api(session: httpx.Client, work_id: str) -> DLsiteItem | None:
 
 # ── Product Detail via HTML (supplement for API-only fields) ──
 
+def scrape_detail_api_v1(session: httpx.Client, item: DLsiteItem) -> DLsiteItem:
+    """Supplement API data with fields from v1 price/info/ajax endpoint."""
+    v1_url = f"https://www.dlsite.com/pro/product/info/ajax?product_id={item.work_id}"
+    resp = _retry_get(session, v1_url)
+    if not resp:
+        return item
+    try:
+        data = json.loads(resp.text)
+    except Exception:
+        return item
+    if isinstance(data, dict):
+        # v1 API returns {work_id: {dl_count: ..., rate_average_2dp: ..., ...}}
+        info = data.get(item.work_id) or data
+        if isinstance(info, dict):
+            item.dl_count = info.get("dl_count")
+            rate = info.get("rate_average_2dp")
+            if rate is not None:
+                item.rating = float(rate)
+            item.rating_count = info.get("rate_count")
+            item.wishlist_count = info.get("wishlist_count")
+            item.review_count = info.get("review_count")
+    return item
+
+
 def _scrape_detail_html_supplement(session: httpx.Client, item: DLsiteItem) -> DLsiteItem:
     """Supplement API data with HTML-only fields (voice_actor, genres, description, file_size)."""
     if not item.work_id:
@@ -342,17 +436,19 @@ def _scrape_detail_html_supplement(session: httpx.Client, item: DLsiteItem) -> D
 # ── Complete product scrape ──
 
 def scrape_one(wid: str) -> DLsiteItem | None:
-    """Scrape one product: API (fast) + HTML supplement (for extra fields)."""
+    """Scrape one product: API (fast) + v1 supplement + HTML supplement (for extra fields)."""
     session = create_session()
     item = scrape_detail_api(session, wid)
     if not item:
         return None
+    # Supplement with v1 API fields (dl_count, rating, etc.)
+    item = scrape_detail_api_v1(session, item)
     # Supplement with HTML-only fields
     item = _scrape_detail_html_supplement(session, item)
     return item
 
 
-def scrape_many(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
+def scrape_many(work_ids: list[str], max_results: int, work_type_filter: str | None = None) -> list[DLsiteItem]:
     """Batch scrape products in parallel."""
     if not work_ids:
         return []
@@ -366,7 +462,10 @@ def scrape_many(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
                 results.append(item)
             time.sleep(CRAWL_DELAY / MAX_WORKERS)
     by_id = {r.work_id: r for r in results}
-    return [by_id[wid] for wid in ids if wid in by_id]
+    ordered = [by_id[wid] for wid in ids if wid in by_id]
+    if work_type_filter:
+        ordered = filter_by_work_type(ordered, work_type_filter)
+    return ordered
 
 
 # ── Ranking ──
@@ -374,6 +473,7 @@ def scrape_many(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
 def scrape_ranking(
     ranking_type: str = "daily",
     max_results: int = 50,
+    work_type_filter: str | None = None,
 ) -> list[DLsiteItem]:
     """Scrape rankings via HTML (get work IDs) + API (product details)."""
     period_map = {"daily": "day", "weekly": "week", "monthly": "month", "total": ""}
@@ -390,7 +490,10 @@ def scrape_ranking(
 
     work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE|SJ)\d{8}", html)
     work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
-    return scrape_many(work_ids, max_results) if work_ids else []
+    results = scrape_many(work_ids, max_results) if work_ids else []
+    if work_type_filter:
+        results = filter_by_work_type(results, work_type_filter)
+    return results
 
 
 # ── Product IDs ──
@@ -446,7 +549,7 @@ async def _run_search_pw(url: str, max_results: int) -> list[DLsiteItem]:
     return scrape_many(links, max_results)
 
 
-def scrape_search(keyword: str, max_results: int = 50) -> list[DLsiteItem]:
+def scrape_search(keyword: str, max_results: int = 50, work_type_filter: str | None = None) -> list[DLsiteItem]:
     """Search DLsite. Playwright for Vue.js + API for details."""
     url = f"{BASE_URL}/home/fs?keyword={quote(keyword)}"
 
@@ -456,6 +559,10 @@ def scrape_search(keyword: str, max_results: int = 50) -> list[DLsiteItem]:
     try:
         asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: _run()).result()
+            results = pool.submit(lambda: _run()).result()
     except RuntimeError:
-        return _run()
+        results = _run()
+
+    if work_type_filter:
+        results = filter_by_work_type(results, work_type_filter)
+    return results

@@ -50,13 +50,16 @@ def main() -> None:
             ranking_type = inp.get("rankingType", "weekly")
             product_ids_str = inp.get("productIds", "")
             max_results = max(1, int(inp.get("maxResults", 50)))
+            work_type_raw = inp.get("workType", "all")
 
-            Actor.log.info(f"Mode={mode} max={max_results}")
+            Actor.log.info(f"Mode={mode} max={max_results} workType={work_type_raw}")
+
+            work_type_filter: str | None = work_type_raw if work_type_raw != "all" else None
 
             if mode == "search":
-                items = scrape_search(keyword, max_results)
+                items = scrape_search(keyword, max_results, work_type_filter=work_type_filter)
             elif mode == "ranking":
-                items = scrape_ranking(ranking_type, max_results)
+                items = scrape_ranking(ranking_type, max_results, work_type_filter=work_type_filter)
             elif mode == "product_ids":
                 ids = [i.strip() for i in product_ids_str.split(",") if i.strip()]
                 items = scrape_product_ids(ids)
