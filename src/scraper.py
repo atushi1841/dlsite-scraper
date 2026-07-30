@@ -474,6 +474,7 @@ def scrape_ranking(
     ranking_type: str = "daily",
     max_results: int = 50,
     work_type_filter: str | None = None,
+    locale: str | None = None,
 ) -> list[DLsiteItem]:
     """Scrape rankings via HTML (get work IDs) + API (product details)."""
     period_map = {"daily": "day", "weekly": "week", "monthly": "month", "total": ""}
@@ -496,9 +497,64 @@ def scrape_ranking(
     return results
 
 
+# ── New Releases ──
+
+def scrape_new_releases(
+    new_releases_type: str = "all",
+    max_results: int = 50,
+    work_type_filter: str | None = None,
+    locale: str | None = None,
+) -> list[DLsiteItem]:
+    """Scrape new releases page (server-side HTML, httpx only)."""
+    if new_releases_type == "maniax":
+        url = f"{BASE_URL}/maniax/new"
+    else:
+        url = f"{BASE_URL}/home/new"
+
+    session = create_session()
+    resp = _retry_get(session, url)
+    if not resp:
+        return []
+
+    html = resp.text
+    work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE|SJ)\d{8}", html)
+    work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
+
+    results = scrape_many(work_ids, max_results)
+    if work_type_filter:
+        results = filter_by_work_type(results, work_type_filter)
+    return results
+
+
+# ── Circle Works ──
+
+def scrape_circle_works(
+    circle_id: str,
+    max_results: int = 50,
+    work_type_filter: str | None = None,
+    locale: str | None = None,
+) -> list[DLsiteItem]:
+    """Scrape circle profile page (server-side HTML, httpx only)."""
+    url = f"{BASE_URL}/maniax/circle/profile/=/maker_id/{circle_id}.html"
+
+    session = create_session()
+    resp = _retry_get(session, url)
+    if not resp:
+        return []
+
+    html = resp.text
+    work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE|SJ)\d{8}", html)
+    work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
+
+    results = scrape_many(work_ids, max_results)
+    if work_type_filter:
+        results = filter_by_work_type(results, work_type_filter)
+    return results
+
+
 # ── Product IDs ──
 
-def scrape_product_ids(product_ids: list[str]) -> list[DLsiteItem]:
+def scrape_product_ids(product_ids: list[str], locale: str | None = None) -> list[DLsiteItem]:
     """Scrape specific product IDs via API (fastest)."""
     return scrape_many([pid.strip() for pid in product_ids if pid.strip()], len(product_ids))
 
@@ -549,7 +605,7 @@ async def _run_search_pw(url: str, max_results: int) -> list[DLsiteItem]:
     return scrape_many(links, max_results)
 
 
-def scrape_search(keyword: str, max_results: int = 50, work_type_filter: str | None = None) -> list[DLsiteItem]:
+def scrape_search(keyword: str, max_results: int = 50, work_type_filter: str | None = None, locale: str | None = None) -> list[DLsiteItem]:
     """Search DLsite. Playwright for Vue.js + API for details."""
     url = f"{BASE_URL}/home/fs?keyword={quote(keyword)}"
 

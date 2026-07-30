@@ -16,11 +16,13 @@
       "description": "How to find products",
       "editor": "select",
       "default": "search",
-      "enum": ["search", "ranking", "product_ids"],
+      "enum": ["search", "ranking", "product_ids", "new_releases", "circle_works"],
       "enumTitles": [
         "Keyword Search — search by title/keyword",
         "Rankings — scrape top-ranked products",
-        "Product IDs — scrape specific RJ/VJ/BJ IDs"
+        "Product IDs — scrape specific RJ/VJ/BJ IDs",
+        "New Releases — products recently released",
+        "Circle Works — works by a specific circle"
       ]
     },
     "rankingType": {
@@ -69,6 +71,24 @@
       "description": "Locale for product data (e.g. ja_JP, en_US). Default: ja_JP",
       "editor": "textfield",
       "default": "ja_JP"
+    },
+    "circleId": {
+      "title": "Circle ID",
+      "type": "string",
+      "description": "Circle/maker ID for circle works mode (e.g. RG12345678)",
+      "editor": "textfield"
+    },
+    "newReleasesType": {
+      "title": "New Releases Type",
+      "type": "string",
+      "description": "Which new-releases page to scrape (only used when searchMode='new_releases')",
+      "editor": "select",
+      "default": "all",
+      "enum": ["all", "maniax"],
+      "enumTitles": [
+        "All (home/new)",
+        "Maniax (maniax/new)"
+      ]
     },
     "proxyConfiguration": {
       "title": "Proxy Configuration",
