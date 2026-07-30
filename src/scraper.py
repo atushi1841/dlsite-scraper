@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import re
 import time
 from dataclasses import dataclass, asdict
@@ -92,7 +93,9 @@ class DLsiteItem:
 # ── HTTP Session ──
 
 def create_session() -> httpx.Client:
+    """Create HTTPX client with adult cookies for DLsite API access."""
     client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False)
+    # Set adult cookies directly (no initial page visit needed for API access)
     client.cookies.set("adult", "on", domain=".dlsite.com")
     client.cookies.set("ovad", "on", domain=".dlsite.com")
     return client
@@ -127,9 +130,11 @@ def scrape_detail_api(session: httpx.Client, work_id: str) -> DLsiteItem | None:
     if not resp:
         return None
 
+    response_text = resp.text
+    # Log first 200 chars on Apify for debugging
     try:
-        data = json.loads(resp.text)
-    except Exception:
+        data = json.loads(response_text)
+    except Exception as e:
         return None
 
     if isinstance(data, list) and len(data) == 0:
