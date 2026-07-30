@@ -2,14 +2,16 @@
 
 Scrape [DLsite](https://www.dlsite.com) — Japan's largest doujin (同人) digital marketplace with 600,000+ products. Extract structured product data from voice/ASMR, games, manga, music, and software categories.
 
-**Data source**: DLsite internal JSON API (not HTML scraping). Returns 30+ fields per product with no JavaScript required.
+**Data source**: DLsite internal JSON API (v2 + v1 hybrid). Returns **69 fields** per product with no JavaScript required.
 
 ## Features
 
 - **Keyword Search** — Search by title or keyword (Playwright-powered for Vue.js rendering)
 - **Ranking Scraping** — Daily, weekly, monthly, and all-time rankings (direct HTTP)
+- **New Releases** — Latest products from home/new or maniax/new (direct HTTP)
+- **Circle Works** — All products by a specific circle/brand (direct HTTP)
 - **Product ID Mode** — Scrape specific RJ/VJ/BJ/RE/VE IDs directly (fastest)
-- **30+ Data Fields** per product including:
+- **69 Data Fields** per product including:
   - Title, circle/brand name, circle ID, work ID (RJ/VJ/BJ)
   - Price (sale + original), discount rate, sale status
   - **Multi-currency prices**: JPY, USD, EUR, GBP, TWD, CNY, KRW
@@ -115,9 +117,11 @@ Scrape specific works by their RJ/VJ/BJ ID:
 
 ## Technical Details
 
-- **Product details**: DLsite internal JSON API (`/pro/product/info/ajax?product_id=RJXXXXX`) — 86 fields, no JS needed
-- **Listings & rankings**: Direct HTTP — server-rendered HTML with work IDs
+- **Product details**: DLsite internal JSON API (v2 product.json + v1 info/ajax hybrid) — 255+86 fields, no JS needed
+- **Listings, rankings & new releases**: Direct HTTP — server-rendered HTML with work IDs
+- **Circle profile**: Direct HTTP — all works from a circle profile page
 - **Keyword search**: Playwright (Chromium) for Vue.js page rendering — extracts IDs, then API for details
+- **Work type filter**: Post-filter by voice/game/manga/music/soft
 - **Parallel scraping**: ThreadPoolExecutor with 8 workers for fast batch processing
 - **Retry logic**: Automatic retry with backoff on network errors
 
