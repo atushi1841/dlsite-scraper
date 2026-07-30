@@ -1,0 +1,119 @@
+{
+  "actorId": "6Z7tJ3plfUmAgGmbk",
+  "name": "dlsite-products",
+  "title": "DLsite Products",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "work_id": {
+        "type": "string",
+        "description": "Product ID (RJ/VJ/BJ format)"
+      },
+      "title": {
+        "type": "string",
+        "description": "Product title"
+      },
+      "circle": {
+        "type": "string",
+        "description": "Circle/creator name"
+      },
+      "price_jpy": {
+        "type": "integer",
+        "description": "Price in JPY"
+      },
+      "original_price_jpy": {
+        "type": "integer",
+        "description": "Original/list price in JPY (before discount)"
+      },
+      "price_usd": {
+        "type": "number",
+        "description": "Price in USD"
+      },
+      "price_eur": {
+        "type": "number",
+        "description": "Price in EUR"
+      },
+      "price_gbp": {
+        "type": "number",
+        "description": "Price in GBP"
+      },
+      "discount_rate": {
+        "type": "integer",
+        "description": "Discount percentage (e.g., 10 = 10% off)"
+      },
+      "sale_active": {
+        "type": "boolean",
+        "description": "Whether the product is currently on sale"
+      },
+      "release_date": {
+        "type": "string",
+        "description": "Release/publication date"
+      },
+      "voice_actor": {
+        "type": "string",
+        "description": "Voice actor(s)"
+      },
+      "age_rating": {
+        "type": "string",
+        "description": "Age rating (All ages / R15 / R18)"
+      },
+      "work_type": {
+        "type": "string",
+        "description": "Work type (Voice/ASMR, Game, Manga, Music, Software)"
+      },
+      "file_size": {
+        "type": "string",
+        "description": "File size"
+      },
+      "genres": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Genre tags"
+      },
+      "dl_count": {
+        "type": "integer",
+        "description": "Number of downloads"
+      },
+      "rating": {
+        "type": "number",
+        "description": "User rating (0.0 - 5.0)"
+      },
+      "rating_count": {
+        "type": "integer",
+        "description": "Number of ratings"
+      },
+      "wishlist_count": {
+        "type": "integer",
+        "description": "Number of wishlist adds"
+      },
+      "review_count": {
+        "type": "integer",
+        "description": "Number of reviews"
+      },
+      "image_url": {
+        "type": "string",
+        "format": "uri",
+        "description": "Product thumbnail URL"
+      },
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "description": "Product page URL on DLsite"
+      },
+      "description": {
+        "type": "string",
+        "description": "Product description"
+      },
+      "detail_level": {
+        "type": "string",
+        "enum": ["api", "html", "playwright"],
+        "description": "How the data was obtained"
+      }
+    }
+  },
+  "options": {
+    "enableListView": true,
+    "enableJsonDownload": true,
+    "enableCsvDownload": true
+  }
+}
