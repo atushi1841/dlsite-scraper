@@ -194,30 +194,33 @@ async def _scrape_detail_full_pw(
     try:
         page = await browser.new_page()
         await page.goto(url, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)  # Let Vue render
+        await asyncio.sleep(2)
 
         html = await page.content()
+
+        rating_text = ""
+        dl_text = ""
+        try:
+            el = await page.query_selector(".point.average_count")
+            if el: rating_text = await el.inner_text()
+        except: pass
+        try:
+            el = await page.query_selector(".work_dl_details .point")
+            if el: dl_text = await el.inner_text()
+        except: pass
+
         await page.close()
 
         item = _parse_detail_from_html(html, work_id, url)
-
-        # Vue-rendered fields (only available after JS execution)
-        rating_el = await page.query_selector(".point.average_count")
-        if rating_el:
-            text = await rating_el.inner_text()
-            try: item.rating = float(text.strip())
+        if rating_text:
+            try: item.rating = float(rating_text.strip())
             except: pass
-
-        dl_el = await page.query_selector(".work_dl_details .point")
-        if dl_el:
-            text = await dl_el.inner_text()
-            try: item.dl_count = int(text.strip().replace(",", ""))
+        if dl_text:
+            try: item.dl_count = int(dl_text.strip().replace(",", ""))
             except: pass
-
         item.detail_level = "full"
         return item
     except Exception:
-        # Fall back to basic
         return None
 
 
