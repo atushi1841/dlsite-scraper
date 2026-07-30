@@ -1,14 +1,15 @@
 """
 DLsite Scraper — Core scraping logic.
 
-Supports three modes:
+Three modes:
 - keyword search (via Playwright for JS rendering)
-- ranking scrape (via Playwright for JS rendering)
-- product ID scrape (direct HTTP — no JS needed for detail pages)
+- ranking scrape (direct HTTP — server-rendered)
+- product ID scrape (direct HTTP — detail pages)
 """
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import re
 import time
@@ -29,37 +30,14 @@ HEADERS = {
     "Accept-Language": "ja-JP,ja;q=0.9,en-US,en;q=0.5",
     "DNT": "1",
 }
-CRAWL_DELAY = 3  # seconds between requests (robots.txt: no explicit delay)
+CRAWL_DELAY = 2  # seconds between requests
+MAX_WORKERS = 5  # parallel product detail scraping
 
-# Work type path mappings
-WORK_TYPE_PATHS = {
-    "all": "home",
-    "voice": "home",
-    "game": "home",
-    "manga": "home",
-    "music": "home",
-    "soft": "home",
-}
-MANIAX_PATHS = {
-    "voice": "maniax",
-    "game": "maniax",
-    "manga": "maniax",
-    "music": "maniax",
-    "soft": "maniax",
-}
 # RJ prefix → genre page path
 RJ_PREFIX_MAP = {
-    "RJ": "home",  # 同人一般
-    "VJ": "maniax",  # 成人
-    "BJ": "maniax",  # 成人(漫画)
-    "RE": "home",  # 法人
-    "VE": "maniax",  # 法人(成人)
+    "RJ": "home", "VJ": "maniax", "BJ": "maniax",
+    "RE": "home", "VE": "maniax", "SJ": "maniax",
 }
-
-
-def _price(text: str) -> int | None:
-    m = re.search(r"[¥￥]\s*([\d,]+)", text)
-    return int(m.group(1).replace(",", "")) if m else None
 
 
 def _clean(text: str) -> str:
@@ -69,27 +47,27 @@ def _clean(text: str) -> str:
 @dataclass
 class DLsiteItem:
     """Normalized DLsite product data."""
-    work_id: str = ""  # RJ/VJ/BJ number
+    work_id: str = ""
     title: str = ""
-    circle: str = ""  # サークル名
+    circle: str = ""
     price_jpy: int | None = None
-    original_price_jpy: int | None = None  # 割引前価格
-    sale_badge: str = ""  # セール表示
-    release_date: str = ""  # 販売日
-    voice_actor: str = ""  # 声優
-    age_rating: str = ""  # 年齢指定
-    work_type: str = ""  # 作品形式
-    file_format: str = ""  # ファイル形式
-    file_size: str = ""  # ファイル容量
-    genres: list[str] = None  # ジャンル一覧
-    dl_count: int | None = None  # DL数
-    rating: float | None = None  # 評価
-    rating_count: int | None = None  # 評価数
-    wishlist_count: int | None = None  # いいね数
-    review_count: int | None = None  # レビュー数
-    description: str = ""  # 作品説明
-    image_url: str = ""  # サムネイル画像
-    sample_images: list[str] = None  # サンプル画像
+    original_price_jpy: int | None = None
+    sale_badge: str = ""
+    release_date: str = ""
+    voice_actor: str = ""
+    age_rating: str = ""
+    work_type: str = ""
+    file_format: str = ""
+    file_size: str = ""
+    genres: list[str] = None
+    dl_count: int | None = None
+    rating: float | None = None
+    rating_count: int | None = None
+    wishlist_count: int | None = None
+    review_count: int | None = None
+    description: str = ""
+    image_url: str = ""
+    sample_images: list[str] = None
     url: str = ""
     scraped_at: str = ""
 
@@ -103,33 +81,31 @@ class DLsiteItem:
         return d
 
 
-# ── HTTP Session Setup ──
+# ── HTTP Session ──
 
 def create_session() -> httpx.Client:
-    """Create HTTPX client with DLsite cookies for adult content access.
-    Bypasses Apify proxy env vars (DLsite doesn't need proxy and proxy causes issues)."""
-    client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False)
-    # Try to visit home page to get session; continue even if it fails
+    """HTTPX client with adult cookies for DLsite. Bypasses Apify proxy."""
+    client = httpx.Client(
+        headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False,
+    )
     try:
         client.get(f"{BASE_URL}/home")
     except Exception:
         pass
-    # Set adult verification cookies regardless
     client.cookies.set("adult", "on", domain=".dlsite.com")
     client.cookies.set("ovad", "on", domain=".dlsite.com")
     return client
 
 
-# ── Product Detail Scraping (Direct HTTP) ──
+# ── Product Detail ──
 
 def scrape_product_detail(session: httpx.Client, work_id: str) -> DLsiteItem | None:
-    """Scrape a single product detail page. Works without JS rendering."""
-    # Determine correct URL path based on RJ prefix
+    """Scrape a single product detail page (server-side HTML, no JS needed)."""
     prefix = re.match(r"([A-Z]+)", work_id)
     prefix_str = prefix.group(1) if prefix else "RJ"
     base_path = RJ_PREFIX_MAP.get(prefix_str, "home")
-
     url = f"{BASE_URL}/{base_path}/work/=/product_id/{work_id}.html"
+
     try:
         resp = session.get(url)
         if resp.status_code != 200 or "adultcheck" in resp.url.path:
@@ -145,7 +121,7 @@ def scrape_product_detail(session: httpx.Client, work_id: str) -> DLsiteItem | N
     if m:
         item.title = m.group(1).split(" | ")[0].strip()
 
-    # Circle/Maker name (server-rendered)
+    # Circle (server-rendered)
     m = re.search(
         r"(?:サークル名|ブランド|メーカー)[：:]?\s*</th>\s*<td[^>]*>(.*?)</td>",
         html, re.DOTALL,
@@ -153,27 +129,24 @@ def scrape_product_detail(session: httpx.Client, work_id: str) -> DLsiteItem | N
     if m:
         item.circle = _clean(re.sub(r"<[^>]+>", " ", m.group(1)))
 
-    # Price (multiple sources: meta tag, price attribute, embedded JSON)
-    price_m = re.search(r'<meta[^>]*itemprop="price"[^>]*content="(\d+)"', html)
-    if price_m:
-        item.price_jpy = int(price_m.group(1))
-    
-    # Original/list price (official_price attribute)
-    m = re.search(r'data-official_price="(\d+)"', html)
-    if m:
-        item.original_price_jpy = int(m.group(1))
-    
-    # Price from JSON data (embedded in HTML)
-    price_json = re.search(r'"(?:price|official_price)["\']:\s*(\d+)', html)
-    if price_json and item.price_jpy is None:
-        item.price_jpy = int(price_json.group(1))
+    # Price
+    pm = re.search(r'<meta[^>]*itemprop="price"[^>]*content="(\d+)"', html)
+    if pm:
+        item.price_jpy = int(pm.group(1))
+    om = re.search(r'data-official_price="(\d+)"', html)
+    if om:
+        item.original_price_jpy = int(om.group(1))
+    if item.price_jpy is None:
+        pj = re.search(r'"(?:price|official_price)["\']:\s*(\d+)', html)
+        if pj:
+            item.price_jpy = int(pj.group(1))
 
-    # Sale badge / original price
-    m = re.search(r"class=\"[^\"]*sale[^\"]*\"[^>]*>(.*?)<", html, re.DOTALL)
-    if m:
-        item.sale_badge = _clean(m.group(1))
+    # Sale badge
+    sm = re.search(r"通知バッジ[^>]*>(.*?)<", html)
+    if sm:
+        item.sale_badge = _clean(sm.group(1))
 
-    # Detail table fields (server-rendered)
+    # Detail table
     detail_rows = re.findall(
         r"<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>", html, re.DOTALL,
     )
@@ -193,49 +166,67 @@ def scrape_product_detail(session: httpx.Client, work_id: str) -> DLsiteItem | N
         elif "ファイル容量" in key:
             item.file_size = val
         elif "ジャンル" in key:
-            # Split by /\n/space or linebreak
-            raw_genres = re.split(r"[\n/]", val)
-            item.genres = [g.strip() for g in raw_genres if g.strip()]
+            item.genres = [g.strip() for g in re.split(r"[\n/]", val) if g.strip()]
 
-    # Description (work description area)
-    m = re.search(
-        r'class="work_description[^"]*"[^>]*>(.*?)</div>',
-        html, re.DOTALL,
+    # Description
+    dm = re.search(
+        r'class="work_description[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL,
     )
-    if m:
-        desc = re.sub(r"<[^>]+>", "\n", m.group(1))
-        item.description = _clean(desc)[:2000]
+    if dm:
+        desc = re.sub(r"<[^>]+>", "\n", dm.group(1))
+        item.description = _clean(desc.replace("&nbsp;", " "))[:3000]
 
-    # Image (og:image or product image)
-    m = re.search(r'<meta[^>]*property="og:image"[^>]*content="([^"]*)"', html)
-    if m:
-        item.image_url = m.group(1)
+    # Image
+    im = re.search(r'<meta[^>]*property="og:image"[^>]*content="([^"]*)"', html)
+    if im:
+        item.image_url = im.group(1)
+    if not item.image_url:
+        im = re.search(r'class="work_slider"[^>]*>.*?src="([^"]*)"', html, re.DOTALL)
+        if im:
+            item.image_url = im.group(1)
 
     # Sample images
-    sample_imgs = re.findall(
+    samples = re.findall(
         r'<img[^>]*src="(https://[^"]*(?:sample|img)[^"]*)"', html,
     )
-    if sample_imgs:
-        item.sample_images = sample_imgs[:10]
-
-    # Work name fallback
-    if not item.title:
-        m = re.search(r'class="work_name"[^>]*>(.*?)</div>', html, re.DOTALL)
-        if m:
-            item.title = _clean(re.sub(r"<[^>]+>", " ", m.group(1)))
+    if samples:
+        item.sample_images = samples[:10]
 
     return item
 
 
-# ── Playwright-based Scraping (Search, Ranking) ──
+def _scrape_one(wid: str) -> DLsiteItem | None:
+    """Wrapper for concurrent scraping (each gets its own session)."""
+    session = create_session()
+    item = scrape_product_detail(session, wid)
+    return item
+
+
+def _scrape_many(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
+    """Scrape multiple products in parallel with ThreadPoolExecutor."""
+    if not work_ids:
+        return []
+    ids = work_ids[:max_results]
+    results: list[DLsiteItem] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        fut_map = {pool.submit(_scrape_one, wid): wid for wid in ids}
+        for future in concurrent.futures.as_completed(fut_map):
+            item = future.result()
+            if item:
+                results.append(item)
+            time.sleep(CRAWL_DELAY / MAX_WORKERS)  # Rate limit across workers
+    # Preserve original order
+    by_id = {r.work_id: r for r in results}
+    return [by_id[wid] for wid in ids if wid in by_id]
+
+
+# ── Playwright Search ──
 
 async def _scrape_with_playwright(
     url: str,
     max_results: int,
-    item_selector: str = 'a[href*="/work/=/product_id/"]',
 ) -> list[DLsiteItem]:
-    """Use Playwright to render Vue.js pages and extract product links,
-    then scrape details via direct HTTP."""
+    """Render Vue.js search page with Playwright, extract product IDs, scrape details."""
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
@@ -253,12 +244,10 @@ async def _scrape_with_playwright(
             timezone_id="Asia/Tokyo",
             viewport={"width": 1920, "height": 1080},
         )
-        # Set adult cookie
         await context.add_cookies([
             {"name": "adult", "value": "on", "domain": ".dlsite.com", "path": "/"},
             {"name": "ovad", "value": "on", "domain": ".dlsite.com", "path": "/"},
         ])
-
         page = await context.new_page()
         page.set_default_timeout(120000)
 
@@ -271,42 +260,30 @@ async def _scrape_with_playwright(
                 await browser.close()
                 return []
 
-        # Wait for Vue to render product items
+        # Wait for Vue to render
         await asyncio.sleep(3)
         try:
-            await page.wait_for_selector(item_selector, timeout=30000)
+            await page.wait_for_selector('a[href*="/work/=/product_id/"]', timeout=30000)
         except Exception:
-            pass  # No items found
+            pass
 
-        # Extract product IDs from the page
         html = await page.content()
-        links = re.findall(r'/work/=/product_id/((?:RJ|VJ|BJ|RE|VE)\d+)', html)
-        links = list(dict.fromkeys(links))  # Dedupe preserving order
-
         await browser.close()
 
-    if not links:
-        return []
+    links = re.findall(r'/work/=/product_id/((?:RJ|VJ|BJ|RE|VE)\d+)', html)
+    links = list(dict.fromkeys(links))
+    return _scrape_many(links, max_results)
 
-    # Scrape each product detail via HTTP (faster than Playwright per-item)
-    session = create_session()
-    results = []
-    for wid in links[:max_results]:
-        item = scrape_product_detail(session, wid)
-        if item:
-            results.append(item)
-        time.sleep(CRAWL_DELAY)
 
-    return results
-
+# ── Public API ──
 
 def scrape_search(
     keyword: str,
     work_type: str = "all",
     max_results: int = 50,
 ) -> list[DLsiteItem]:
-    """Search DLsite by keyword. Uses Playwright for JS rendering."""
-    base = WORK_TYPE_PATHS.get(work_type, "home")
+    """Search DLsite by keyword. Uses Playwright for Vue.js rendering."""
+    base = "home" if work_type in ("all", "voice", "game", "manga", "music", "soft") else "home"
     url = f"{BASE_URL}/{base}/fs?keyword={quote(keyword)}"
     return asyncio.run(_scrape_with_playwright(url, max_results))
 
@@ -316,57 +293,33 @@ def scrape_ranking(
     work_type: str = "all",
     max_results: int = 50,
 ) -> list[DLsiteItem]:
-    """Scrape DLsite rankings via direct HTTP (server-rendered)."""
-    base = WORK_TYPE_PATHS.get(work_type, "home")
-    
-    # Map short type to URL path
+    """Scrape rankings via direct HTTP (server-rendered, no JS needed)."""
+    base = "home"
     period_map = {"daily": "day", "weekly": "week", "monthly": "month", "total": ""}
     period = period_map.get(ranking_type, "day")
-    
-    if period:
-        url = f"{BASE_URL}/{base}/ranking/{period}"
-    else:
-        url = f"{BASE_URL}/{base}/ranking?date=all"
+    url = f"{BASE_URL}/{base}/ranking/{period}" if period else f"{BASE_URL}/{base}/ranking?date=all"
+
     session = create_session()
-    resp = session.get(url)
+    try:
+        resp = session.get(url)
+    except Exception:
+        return []
     if resp.status_code != 200:
         return []
-    
+
     html = resp.text
-    # Check for Cloudflare
     if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
         return []
-    
-    html = resp.text
-    # Extract all work IDs from ranking page
-    work_ids = re.findall(r'/(?:RJ|VJ|BJ|RE|VE|SJ)\d{8}', html)
-    work_ids = list(dict.fromkeys(work_ids))  # Dedupe preserve order
-    # Clean up the leading slash
-    work_ids = [w.lstrip("/") for w in work_ids]
-    
+
+    work_ids = re.findall(r"/(?:RJ|VJ|BJ|RE|VE)\d{8}", html)
+    work_ids = list(dict.fromkeys(wid.lstrip("/") for wid in work_ids))
+
     if not work_ids:
         return []
-    
-    # Scrape each product detail
-    results = []
-    for wid in work_ids[:max_results]:
-        item = scrape_product_detail(session, wid)
-        if item:
-            results.append(item)
-        time.sleep(CRAWL_DELAY)
-    
-    return results
+
+    return _scrape_many(work_ids, max_results)
 
 
-def scrape_product_ids(
-    product_ids: list[str],
-) -> list[DLsiteItem]:
-    """Scrape specific product IDs via direct HTTP (fastest)."""
-    session = create_session()
-    results = []
-    for pid in product_ids:
-        item = scrape_product_detail(session, pid.strip())
-        if item:
-            results.append(item)
-        time.sleep(CRAWL_DELAY)
-    return results
+def scrape_product_ids(product_ids: list[str]) -> list[DLsiteItem]:
+    """Scrape specific product IDs (fastest — direct HTTP only)."""
+    return _scrape_many([pid.strip() for pid in product_ids if pid.strip()], len(product_ids))
