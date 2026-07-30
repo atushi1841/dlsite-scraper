@@ -122,7 +122,10 @@ def _parse_detail_from_html(html: str, work_id: str, url: str) -> DLsiteItem:
     if m: item.title = m.group(1).split(" | ")[0].strip()
 
     m = re.search(r"(?:サークル名|ブランド|メーカー)[：:]?\s*</th>\s*<td[^>]*>(.*?)</td>", html, re.DOTALL)
-    if m: item.circle = _clean(re.sub(r"<[^>]+>", " ", m.group(1)))
+    if m:
+        raw = re.sub(r"<[^>]+>", " ", m.group(1))
+        # Clean up follow button text and extra tags
+        item.circle = _clean(re.sub(r"(?:フォロー|お気に入り|閉じる).*$", "", raw))
 
     pm = re.search(r'<meta[^>]*itemprop="price"[^>]*content="(\d+)"', html)
     if pm: item.price_jpy = int(pm.group(1))
