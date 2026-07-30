@@ -107,11 +107,15 @@ class DLsiteItem:
 # ── HTTP Session Setup ──
 
 def create_session() -> httpx.Client:
-    """Create HTTPX client with DLsite cookies for adult content access."""
-    client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30)
-    # First visit to get session
-    client.get(f"{BASE_URL}/home")
-    # Set adult verification cookies
+    """Create HTTPX client with DLsite cookies for adult content access.
+    Bypasses Apify proxy env vars (DLsite doesn't need proxy and proxy causes issues)."""
+    client = httpx.Client(headers=HEADERS, follow_redirects=True, timeout=30, trust_env=False)
+    # Try to visit home page to get session; continue even if it fails
+    try:
+        client.get(f"{BASE_URL}/home")
+    except Exception:
+        pass
+    # Set adult verification cookies regardless
     client.cookies.set("adult", "on", domain=".dlsite.com")
     client.cookies.set("ovad", "on", domain=".dlsite.com")
     return client
@@ -328,6 +332,13 @@ def scrape_ranking(
     session = create_session()
     resp = session.get(url)
     if resp.status_code != 200:
+        print(f"  [ERR] Ranking page returned {resp.status_code}")
+        return []
+    
+    html = resp.text
+    # Check for Cloudflare
+    if "Just a moment" in html[:500] or "しばらくお待ち" in html[:500]:
+        print("  [ERR] Cloudflare block on ranking page")
         return []
     
     html = resp.text
