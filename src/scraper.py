@@ -279,8 +279,19 @@ def _scrape_many_basic(work_ids: list[str], max_results: int) -> list[DLsiteItem
 
 
 def _scrape_many_full(work_ids: list[str], max_results: int) -> list[DLsiteItem]:
-    """Batch scrape products with Playwright for Vue-rendered data (slower)."""
-    return asyncio.run(_enrich_with_playwright(work_ids, max_results))
+    """Batch scrape products with Playwright for Vue-rendered data (slower).
+    Uses ThreadPoolExecutor to avoid async context conflicts (Apify mode)."""
+    if not work_ids:
+        return []
+    ids = work_ids[:max_results]
+    try:
+        loop = asyncio.get_running_loop()
+        # Inside async context — run in separate thread
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(lambda: asyncio.run(_enrich_with_playwright(ids, len(ids))))
+            return fut.result()
+    except RuntimeError:
+        return asyncio.run(_enrich_with_playwright(ids, len(ids)))
 
 
 # ── Playwright Search ──
@@ -351,13 +362,21 @@ def scrape_search(
 ) -> list[DLsiteItem]:
     """Search DLsite. When detail='full', uses Playwright for all data."""
     url = f"{BASE_URL}/home/fs?keyword={quote(keyword)}"
-    if detail_level == "full":
-        return asyncio.run(_scrape_search_pw(url, max_results))
-    # Basic: Playwright for search IDs + HTTP for details
-    ids = asyncio.run(_scrape_search_pw(url, max_results))
-    if not ids:
-        return []
-    return _scrape_many_basic([i.work_id for i in ids], max_results)
+
+    def _run_search():
+        if detail_level == "full":
+            return asyncio.run(_scrape_search_pw(url, max_results))
+        ids = asyncio.run(_scrape_search_pw(url, max_results))
+        if not ids:
+            return []
+        return _scrape_many_basic([i.work_id for i in ids], max_results)
+
+    try:
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: _run_search()).result()
+    except RuntimeError:
+        return _run_search()
 
 
 def scrape_ranking(
