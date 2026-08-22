@@ -129,6 +129,26 @@ Scrape specific works by their RJ/VJ/BJ ID:
 
 Python, httpx, Playwright (search only), concurrent.futures, re (regex), Apify SDK.
 
+## Pricing
+
+- **Run start**: $0.00005 per run
+- **Per result**: $0.005 per product (charged only for items actually captured)
+- A default test run (e.g. 20 results) typically costs **under $0.02**
+
+No free-tier complexity — you pay only for what you extract.
+
+## Proxy Requirement
+
+- **Free plan**: use `useApifyProxy: true` only (auto proxies). This works because DLsite does not block datacenter IPs.
+- **`apifyProxyCountry: "JP"` requires a paid Apify plan** — on the free plan country-specific proxies return `407 Proxy Authentication Required`. Leave country unset unless you have a paid plan.
+
+## Limitations
+
+- **Keyword search** uses Playwright (Chromium) to render DLsite's Vue.js pages and is slower than the other modes (~30–60s warm-up).
+- **Ranking / new releases / circle / product ID modes** use direct HTTP and are fast — prefer them for bulk scraping.
+- `maxResults` is capped at 200 per run; run multiple times with different keywords/circles to scale.
+- Site structure may change; if a mode returns 0 items, switch modes or check for DLsite updates.
+
 ## License
 
 MIT
