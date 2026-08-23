@@ -606,8 +606,12 @@ async def _run_search_pw(url: str, max_results: int) -> list[DLsiteItem]:
 
 
 def scrape_search(keyword: str, max_results: int = 50, work_type_filter: str | None = None, locale: str | None = None) -> list[DLsiteItem]:
-    """Search DLsite. Playwright for Vue.js + API for details."""
-    url = f"{BASE_URL}/home/fs?keyword={quote(keyword)}"
+    """Search DLsite. Playwright for Vue.js + API for details.
+
+    Note: 検索結果は GET /home/fsr/=/keyword/{kw} (fsr) が正しい。
+    /home/fs は条件入力ページのままで商品を返さない (2026-08-23確認)。
+    """
+    url = f"{BASE_URL}/home/fsr/=/keyword/{quote(keyword)}"
 
     def _run():
         return asyncio.run(_run_search_pw(url, max_results))
