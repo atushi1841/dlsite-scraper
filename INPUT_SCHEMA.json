@@ -16,7 +16,13 @@
       "description": "How to find products",
       "editor": "select",
       "default": "search",
-      "enum": ["search", "ranking", "product_ids", "new_releases", "circle_works"],
+      "enum": [
+        "search",
+        "ranking",
+        "product_ids",
+        "new_releases",
+        "circle_works"
+      ],
       "enumTitles": [
         "Keyword Search — search by title/keyword",
         "Rankings — scrape top-ranked products",
@@ -31,8 +37,18 @@
       "description": "Which ranking to scrape (only used when searchMode='ranking')",
       "editor": "select",
       "default": "daily",
-      "enum": ["daily", "weekly", "monthly", "total"],
-      "enumTitles": ["Daily", "Weekly", "Monthly", "All-time Total"]
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly",
+        "total"
+      ],
+      "enumTitles": [
+        "Daily",
+        "Weekly",
+        "Monthly",
+        "All-time Total"
+      ]
     },
     "workType": {
       "title": "Work Type",
@@ -40,7 +56,14 @@
       "description": "Filter by work category. 'all' = all types",
       "editor": "select",
       "default": "all",
-      "enum": ["all", "voice", "game", "manga", "music", "soft"],
+      "enum": [
+        "all",
+        "voice",
+        "game",
+        "manga",
+        "music",
+        "soft"
+      ],
       "enumTitles": [
         "All types",
         "Voice / ASMR",
@@ -84,7 +107,10 @@
       "description": "Which new-releases page to scrape (only used when searchMode='new_releases')",
       "editor": "select",
       "default": "all",
-      "enum": ["all", "maniax"],
+      "enum": [
+        "all",
+        "maniax"
+      ],
       "enumTitles": [
         "All (home/new)",
         "Maniax (maniax/new)"
@@ -105,5 +131,5 @@
       }
     }
   },
-  "required": ["searchMode"]
+  "required": []
 }
